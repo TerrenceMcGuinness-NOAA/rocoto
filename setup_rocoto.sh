@@ -2,7 +2,7 @@
 # Setup script for Rocoto environment
 # Source this script to add Rocoto to your PATH
 
-ROCOTO_ROOT="/home/tmcguinness/GITHUB/COPILOT/rocoto"
+ROCOTO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Add Rocoto bin directory to PATH
 export PATH="${ROCOTO_ROOT}/bin:${PATH}"

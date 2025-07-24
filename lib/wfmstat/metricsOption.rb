@@ -15,7 +15,7 @@ module WFMStat
     require 'optparse'
     require 'pp'                      
     
-    attr_reader :database, :workflowdoc, :verbose, :user_stats, :system_stats, :threads, :processes, :refresh, :refresh_interval
+    attr_reader :database, :workflowdoc, :verbose, :user_stats, :system_stats, :threads, :processes, :refresh, :refresh_interval, :zombies, :detailed_workflows
 
     ##########################################  
     #
@@ -28,6 +28,8 @@ module WFMStat
       @system_stats = false 
       @threads = false
       @processes = false
+      @zombies = false
+      @detailed_workflows = false
       @refresh = false
       @refresh_interval = 5
       @name = name
@@ -76,7 +78,7 @@ module WFMStat
     def add_opts(opts)
 
       # Command usage text
-      opts.banner = "Usage:  #{@name} [-h] [-v #] [-d database_file] [-w workflow_document] [-u] [-s] [-t] [-p] [-r] [-i SECONDS]"
+      opts.banner = "Usage:  #{@name} [-h] [-v #] [-d database_file] [-w workflow_document] [-u] [-s] [-t] [-p] [-z] [-W] [-r] [-i SECONDS]"
       
       # Handle option for specifying the database file (optional)
       opts.on("-d","--database PATH",String,"Path to database store file (optional)") do |db|
@@ -121,6 +123,16 @@ module WFMStat
       # Process information  
       opts.on("-p","--processes","Show detailed process information") do
         @processes = true
+      end
+
+      # Zombie process detection
+      opts.on("-z","--zombies","Show zombie process information") do
+        @zombies = true
+      end
+
+      # Detailed workflow breakdown
+      opts.on("-W","--detailed-workflows","Force detailed per-workflow breakdown") do
+        @detailed_workflows = true
       end
 
       # Refresh mode

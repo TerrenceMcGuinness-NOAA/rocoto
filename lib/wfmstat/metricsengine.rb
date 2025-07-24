@@ -31,13 +31,12 @@ module WFMStat
 
         # Initialize metrics collection
         @daemon_processes = {}
+        @zombie_processes = []
         @system_metrics = {}
 
       rescue => crash
-        WorkflowMgr.log(crash.message)
-        WorkflowMgr.log(crash.backtrace.join("\n"))
-        WorkflowMgr.stderr(crash.message, 1)
-        WorkflowMgr.stderr(crash.backtrace.join("\n"), 1)
+        STDERR.puts(crash.message)
+        STDERR.puts(crash.backtrace.join("\n"))
         Process.exit(1)
       end
 
@@ -117,13 +116,17 @@ module WFMStat
         display_process_info
       end
 
+      if @options.zombies
+        display_zombie_info
+      end
+
       # Show database metrics if database is available
       if @options.database && File.exist?(@options.database)
         display_database_metrics
       end
 
       # If no specific options, show summary
-      if !@options.user_stats && !@options.system_stats && !@options.threads && !@options.processes
+      if !@options.user_stats && !@options.system_stats && !@options.threads && !@options.processes && !@options.zombies
         display_summary
       end
 
@@ -141,32 +144,82 @@ module WFMStat
         'rocotodbserver' => [],
         'rocotoioserver' => []
       }
+      
+      # Clear previous zombie list
+      @zombie_processes = []
 
-      # Use ps to find all rocoto daemon processes
+      # Use ps to find all rocoto daemon processes including state information
       ['rocotobqserver', 'rocotodbserver', 'rocotoioserver'].each do |daemon_type|
-        output = `ps -eo pid,ppid,user,thcount,nlwp,rss,vsz,pcpu,pmem,etime,cmd | grep #{daemon_type} | grep -v grep`
+        # Include 'stat' field to detect zombie processes
+        output = `ps -eo pid,ppid,user,stat,thcount,nlwp,rss,vsz,pcpu,pmem,etime,cmd | grep #{daemon_type} | grep -v grep`
         
         output.each_line do |line|
-          fields = line.strip.split(/\s+/, 11)
-          next if fields.length < 11
+          fields = line.strip.split(/\s+/, 12)
+          next if fields.length < 12
 
           process_info = {
             :pid => fields[0].to_i,
             :ppid => fields[1].to_i,
             :user => fields[2],
-            :threads => fields[3].to_i,
-            :lwp => fields[4].to_i,
-            :rss => fields[5].to_i,    # Resident Set Size (KB)
-            :vsz => fields[6].to_i,    # Virtual Size (KB)
-            :pcpu => fields[7].to_f,   # CPU percentage
-            :pmem => fields[8].to_f,   # Memory percentage
-            :etime => fields[9],       # Elapsed time
-            :cmd => fields[10],        # Command line
-            :daemon_type => daemon_type
+            :stat => fields[3],        # Process state
+            :threads => fields[4].to_i,
+            :lwp => fields[5].to_i,
+            :rss => fields[6].to_i,    # Resident Set Size (KB)
+            :vsz => fields[7].to_i,    # Virtual Size (KB)
+            :pcpu => fields[8].to_f,   # CPU percentage
+            :pmem => fields[9].to_f,   # Memory percentage
+            :etime => fields[10],      # Elapsed time
+            :cmd => fields[11],        # Command line
+            :daemon_type => daemon_type,
+            :is_zombie => false
           }
+
+          # Check if process is a zombie using ps stat field
+          if fields[3].include?('Z')
+            process_info[:is_zombie] = true
+            @zombie_processes << process_info
+          else
+            # Double-check using /proc filesystem (Rocoto's method)
+            process_info[:is_zombie] = check_zombie_status(fields[0].to_i)
+            if process_info[:is_zombie]
+              @zombie_processes << process_info
+            end
+          end
 
           @daemon_processes[daemon_type] << process_info
         end
+      end
+
+    end
+
+    ##########################################
+    #
+    # check_zombie_status - Use Rocoto's zombie detection method
+    #
+    ##########################################
+    def check_zombie_status(pid)
+
+      begin
+        if RUBY_PLATFORM =~ /linux/
+          # Use /proc filesystem to check process state (Rocoto's method)
+          status_file = "/proc/#{pid}/status"
+          return false unless File.exist?(status_file)
+          
+          status_content = IO.readlines(status_file, nil)[0]
+          return false unless status_content
+          
+          state_match = status_content.match(/^State:\s+(\w)/)
+          return false unless state_match
+          
+          return state_match[1] == "Z"
+        else
+          # Fallback method for non-Linux systems
+          system("ps -eo pid,stat | grep Z | grep #{pid} 2>&1 > /dev/null")
+          return $?.exitstatus == 0
+        end
+      rescue => e
+        # If we can't determine status, assume not zombie
+        return false
       end
 
     end
@@ -209,6 +262,22 @@ module WFMStat
       puts
       puts "Active users running daemons: #{users.size}"
       puts "Users: #{users.to_a.sort.join(', ')}" if users.size > 0
+      
+      # Display zombie information
+      if @zombie_processes.length > 0
+        puts
+        puts "⚠️  WARNING: ZOMBIE PROCESSES DETECTED"
+        puts "=" * 40
+        @zombie_processes.each do |zombie|
+          puts sprintf("ZOMBIE: PID %d (%s) - %s owned by %s", 
+                      zombie[:pid], zombie[:daemon_type], zombie[:stat], zombie[:user])
+        end
+        puts "=" * 40
+        puts "Total zombie processes: #{@zombie_processes.length}"
+      else
+        puts
+        puts "✓ No zombie processes detected"
+      end
       puts
 
     end
@@ -226,6 +295,8 @@ module WFMStat
       puts
 
       user_stats = {}
+      user_workflows = {}
+      user_workflow_details = {}
 
       @daemon_processes.each do |daemon_type, processes|
         processes.each do |process|
@@ -236,14 +307,50 @@ module WFMStat
           user_stats[user][:memory] += process[:rss] / 1024.0
           user_stats[user][:daemons][daemon_type] ||= 0
           user_stats[user][:daemons][daemon_type] += 1
+          
+          # Extract workflow XML file from command line
+          xml_file = extract_workflow_xml(process[:cmd])
+          if xml_file
+            user_workflows[user] ||= Set.new
+            user_workflows[user].add(xml_file)
+            
+            # Track detailed stats per workflow
+            user_workflow_details[user] ||= {}
+            user_workflow_details[user][xml_file] ||= { :processes => 0, :threads => 0, :memory => 0, :daemons => {} }
+            user_workflow_details[user][xml_file][:processes] += 1
+            user_workflow_details[user][xml_file][:threads] += process[:threads]
+            user_workflow_details[user][xml_file][:memory] += process[:rss] / 1024.0
+            user_workflow_details[user][xml_file][:daemons][daemon_type] ||= 0
+            user_workflow_details[user][xml_file][:daemons][daemon_type] += 1
+          end
         end
       end
 
-      format = "%-12s %8s %8s %10s %10s %10s %10s\n"
-      puts sprintf(format, "USER", "PROC", "THREADS", "MEMORY_MB", "BQSERVER", "DBSERVER", "IOSERVER")
-      puts "-" * 80
+      # Check if any user has multiple workflows or if detailed view is forced
+      has_multiple_workflows = user_workflows.any? { |user, workflows| workflows.size > 1 }
+      force_detailed = @options.detailed_workflows
+
+      if has_multiple_workflows || force_detailed
+        display_detailed_workflow_stats(user_stats, user_workflow_details)
+      else
+        display_compact_workflow_stats(user_stats, user_workflows)
+      end
+
+    end
+
+    ##########################################
+    #
+    # display_compact_workflow_stats - Single workflow per user
+    #
+    ##########################################
+    def display_compact_workflow_stats(user_stats, user_workflows)
+      
+      format = "%-12s %8s %8s %10s %10s %10s %10s %-20s\n"
+      puts sprintf(format, "USER", "PROC", "THREADS", "MEMORY_MB", "BQSERVER", "DBSERVER", "IOSERVER", "WORKFLOW_XML")
+      puts "-" * 100
 
       user_stats.sort.each do |user, stats|
+        workflow_list = user_workflows[user] ? user_workflows[user].to_a.join(", ") : "N/A"
         puts sprintf(format,
                     user,
                     stats[:processes],
@@ -251,9 +358,50 @@ module WFMStat
                     sprintf("%.1f", stats[:memory]),
                     stats[:daemons]['rocotobqserver'] || 0,
                     stats[:daemons]['rocotodbserver'] || 0,
-                    stats[:daemons]['rocotoioserver'] || 0)
+                    stats[:daemons]['rocotoioserver'] || 0,
+                    workflow_list)
       end
       puts
+
+    end
+
+    ##########################################
+    #
+    # display_detailed_workflow_stats - Multiple workflows per user
+    #
+    ##########################################
+    def display_detailed_workflow_stats(user_stats, user_workflow_details)
+      
+      total_workflows = user_workflow_details.values.map(&:keys).flatten.uniq.size
+      puts "Pipeline/Multi-workflow mode - showing detailed per-workflow breakdown:"
+      puts "Total unique workflows detected: #{total_workflows}"
+      puts
+      
+      user_stats.sort.each do |user, stats|
+        puts sprintf("User: %-12s [%d processes, %d threads, %.1f MB total]", 
+                    user, stats[:processes], stats[:threads], stats[:memory])
+        
+        if user_workflow_details[user]
+          workflow_count = user_workflow_details[user].size
+          puts sprintf("  Running %d workflow%s:", workflow_count, workflow_count == 1 ? "" : "s")
+          
+          user_workflow_details[user].sort.each do |workflow, wf_stats|
+            # Calculate daemon breakdown
+            daemon_info = []
+            daemon_info << "BQ:#{wf_stats[:daemons]['rocotobqserver'] || 0}" if (wf_stats[:daemons]['rocotobqserver'] || 0) > 0
+            daemon_info << "DB:#{wf_stats[:daemons]['rocotodbserver'] || 0}" if (wf_stats[:daemons]['rocotodbserver'] || 0) > 0  
+            daemon_info << "IO:#{wf_stats[:daemons]['rocotoioserver'] || 0}" if (wf_stats[:daemons]['rocotoioserver'] || 0) > 0
+            
+            puts sprintf("  ├─ %-20s: %2d processes, %2d threads, %5.1f MB [%s]",
+                        workflow,
+                        wf_stats[:processes],
+                        wf_stats[:threads],
+                        wf_stats[:memory],
+                        daemon_info.join(" "))
+          end
+        end
+        puts
+      end
 
     end
 
@@ -320,21 +468,31 @@ module WFMStat
       puts "=" * 80
       puts
 
-      format = "%-8s %-12s %-16s %8s %8s %10s %10s\n"
-      puts sprintf(format, "PID", "USER", "DAEMON_TYPE", "THREADS", "LWP", "RSS_MB", "ETIME")
-      puts "-" * 80
+      format = "%-8s %-12s %-16s %8s %8s %10s %10s %8s\n"
+      puts sprintf(format, "PID", "USER", "DAEMON_TYPE", "THREADS", "LWP", "RSS_MB", "ETIME", "STATUS")
+      puts "-" * 88
 
       @daemon_processes.each do |daemon_type, processes|
         processes.sort_by { |p| p[:threads] }.reverse.each do |process|
-          puts sprintf(format,
+          status = process[:is_zombie] ? "ZOMBIE" : "NORMAL"
+          status_marker = process[:is_zombie] ? "⚠️ " : "  "
+          
+          puts sprintf("#{status_marker}#{format}",
                       process[:pid],
                       process[:user],
                       daemon_type,
                       process[:threads],
                       process[:lwp],
                       sprintf("%.1f", process[:rss] / 1024.0),
-                      process[:etime])
+                      process[:etime],
+                      status)
         end
+      end
+      
+      zombie_count = @daemon_processes.values.flatten.count { |p| p[:is_zombie] }
+      if zombie_count > 0
+        puts
+        puts "⚠️  #{zombie_count} zombie process(es) detected - use -z for detailed zombie analysis"
       end
       puts
 
@@ -420,6 +578,113 @@ module WFMStat
         puts "Unable to read database metrics: #{e.message}" if @options.verbose >= 1
       end
 
+    end
+
+    ##########################################
+    #
+    # display_zombie_info
+    #
+    ##########################################
+    def display_zombie_info
+
+      puts "=" * 80
+      puts "Zombie Process Detection"
+      puts "=" * 80
+      puts
+
+      if @zombie_processes.length > 0
+        puts "⚠️  WARNING: ZOMBIE ROCOTO DAEMONS DETECTED"
+        puts "=" * 50
+        puts
+
+        format = "%-8s %-12s %-16s %-8s %-10s %-20s\n"
+        puts sprintf(format, "PID", "USER", "DAEMON_TYPE", "STAT", "ETIME", "COMMAND")
+        puts "-" * 80
+
+        @zombie_processes.each do |zombie|
+          puts sprintf(format,
+                      zombie[:pid],
+                      zombie[:user],
+                      zombie[:daemon_type],
+                      zombie[:stat],
+                      zombie[:etime],
+                      zombie[:cmd].length > 20 ? zombie[:cmd][0..17] + "..." : zombie[:cmd])
+        end
+
+        puts
+        puts "=" * 50
+        puts "Total zombie processes found: #{@zombie_processes.length}"
+        puts
+        puts "RECOMMENDED ACTIONS:"
+        puts "1. Check parent processes that may have failed to reap child processes"
+        puts "2. Consider restarting affected Rocoto workflows"
+        puts "3. Monitor system for accumulating zombie processes"
+        puts "4. Check system logs for related errors"
+        
+        # Group zombies by user for specific recommendations
+        zombie_users = @zombie_processes.group_by { |z| z[:user] }
+        if zombie_users.size > 1
+          puts "5. Zombies affect multiple users: #{zombie_users.keys.join(', ')}"
+        end
+        
+        # Check for long-running zombies
+        old_zombies = @zombie_processes.select { |z| z[:etime].include?('-') }  # Day+ old
+        if old_zombies.length > 0
+          puts "6. #{old_zombies.length} zombie(s) are over 1 day old - urgent attention needed"
+        end
+
+      else
+        puts "✓ No zombie Rocoto daemon processes detected"
+        puts
+        puts "All Rocoto daemons are healthy:"
+        total_processes = @daemon_processes.values.flatten.length
+        puts "  • #{total_processes} active daemon processes found"
+        puts "  • All processes are in normal running states"
+        puts "  • No zombie or orphaned processes detected"
+        
+        if total_processes == 0
+          puts
+          puts "Note: No Rocoto daemons are currently running on this system."
+          puts "This is normal if no workflows are active."
+        end
+      end
+
+      puts
+
+    end
+
+    ##########################################
+    #
+    # extract_workflow_xml - Extract XML filename from command line
+    #
+    ##########################################
+    def extract_workflow_xml(cmd_line)
+      
+      return nil if cmd_line.nil? || cmd_line.empty?
+      
+      # Split command line into arguments
+      args = cmd_line.strip.split(/\s+/)
+      
+      # For rocoto daemons, the XML file is typically the 4th argument (index 3)
+      # Command pattern: rocotobqserver [parent_pid] [verbosity] [workflow_xml] [pipe_fd]
+      if args.length >= 4
+        potential_xml = args[3]
+        
+        # Check if it looks like an XML file
+        if potential_xml.end_with?('.xml')
+          # Return just the filename, not the full path
+          return File.basename(potential_xml)
+        end
+      end
+      
+      # Fallback: look for any .xml file in the command line
+      args.each do |arg|
+        if arg.end_with?('.xml')
+          return File.basename(arg)
+        end
+      end
+      
+      return nil
     end
 
   end
