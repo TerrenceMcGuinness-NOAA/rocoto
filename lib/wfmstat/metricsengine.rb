@@ -125,8 +125,11 @@ module WFMStat
         display_database_metrics
       end
 
+      # Verbose dashboard mode - show comprehensive overview
+      if @options.verbose >= 2
+        display_verbose_dashboard
       # If no specific options, show summary
-      if !@options.user_stats && !@options.system_stats && !@options.threads && !@options.processes && !@options.zombies
+      elsif !@options.user_stats && !@options.system_stats && !@options.threads && !@options.processes && !@options.zombies
         display_summary
       end
 
@@ -651,6 +654,164 @@ module WFMStat
 
       puts
 
+    end
+
+    ##########################################
+    #
+    # display_verbose_dashboard - Comprehensive overview of all metrics
+    #
+    ##########################################
+    def display_verbose_dashboard
+      
+      puts "=" * 100
+      puts "ROCOTO COMPREHENSIVE DASHBOARD (Verbose Mode)"
+      puts "=" * 100
+      puts "Timestamp: #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}"
+      puts
+
+      # 1. Executive Summary
+      total_processes = @daemon_processes.values.flatten.length
+      total_threads = @daemon_processes.values.flatten.sum { |p| p[:threads] }
+      total_memory = @daemon_processes.values.flatten.sum { |p| p[:rss] } / 1024.0
+      
+      puts "📊 EXECUTIVE SUMMARY"
+      puts "-" * 50
+      puts sprintf("Total Daemon Processes: %d", total_processes)
+      puts sprintf("Total Threads:          %d", total_threads) 
+      puts sprintf("Total Memory Usage:     %.1f MB", total_memory)
+      puts sprintf("Active Users:           %d", get_active_users.size)
+      puts sprintf("Zombie Status:          %s", @zombie_processes.empty? ? "✓ All Healthy" : "⚠ #{@zombie_processes.size} zombies detected")
+      puts
+
+      # 2. Per-Daemon Breakdown
+      puts "🔧 DAEMON TYPE BREAKDOWN"
+      puts "-" * 50
+      ['rocotobqserver', 'rocotodbserver', 'rocotoioserver'].each do |daemon_type|
+        processes = @daemon_processes[daemon_type]
+        if processes.length > 0
+          daemon_memory = processes.sum { |p| p[:rss] } / 1024.0
+          daemon_threads = processes.sum { |p| p[:threads] }
+          puts sprintf("%-15s: %2d processes, %3d threads, %6.1f MB", 
+                      daemon_type, processes.length, daemon_threads, daemon_memory)
+        else
+          puts sprintf("%-15s: %2d processes (inactive)", daemon_type, 0)
+        end
+      end
+      puts
+
+      # 3. Workflow Analysis
+      puts "📋 WORKFLOW ANALYSIS"
+      puts "-" * 50
+      workflow_stats = analyze_workflows
+      if workflow_stats.empty?
+        puts "No active workflows detected"
+      else
+        puts sprintf("Active Workflows: %d", workflow_stats.size)
+        workflow_stats.sort.each do |workflow, stats|
+          puts sprintf("├─ %-20s: %d processes, %.1f MB", 
+                      workflow, stats[:processes], stats[:memory])
+        end
+      end
+      puts
+
+      # 4. User Resource Distribution
+      puts "👥 USER RESOURCE DISTRIBUTION"
+      puts "-" * 50
+      user_stats = calculate_user_stats
+      if user_stats.empty?
+        puts "No users running daemons"
+      else
+        user_stats.sort.each do |user, stats|
+          puts sprintf("%-12s: %2d proc, %3d threads, %6.1f MB", 
+                      user, stats[:processes], stats[:threads], stats[:memory])
+        end
+      end
+      puts
+
+      # 5. System Health Check
+      puts "🏥 SYSTEM HEALTH CHECK"
+      puts "-" * 50
+      health_issues = []
+      
+      # Check for zombies
+      if @zombie_processes.length > 0
+        health_issues << "#{@zombie_processes.length} zombie processes detected"
+      end
+      
+      # Check for resource usage
+      if total_memory > 1000  # > 1GB
+        health_issues << "High memory usage (#{total_memory.round(1)} MB)"
+      end
+      
+      # Check for too many processes per user
+      user_stats.each do |user, stats|
+        if stats[:processes] > 10
+          health_issues << "User #{user} has many processes (#{stats[:processes]})"
+        end
+      end
+      
+      if health_issues.empty?
+        puts "✓ All systems healthy"
+        puts "✓ No performance concerns detected"
+        puts "✓ Resource usage within normal limits"
+      else
+        puts "⚠ Health Issues Detected:"
+        health_issues.each { |issue| puts "  • #{issue}" }
+      end
+      puts
+
+      # 6. Database Status (if available)
+      if @options.database && File.exist?(@options.database)
+        puts "💾 DATABASE STATUS"
+        puts "-" * 50
+        db_size = File.size(@options.database) / 1024.0 / 1024.0
+        puts sprintf("Database file: %s", File.basename(@options.database))
+        puts sprintf("Database size: %.2f MB", db_size)
+        puts sprintf("Last modified: %s", File.mtime(@options.database).strftime('%Y-%m-%d %H:%M:%S'))
+        puts
+      end
+
+      puts "=" * 100
+      puts "End of Comprehensive Dashboard"
+      puts "=" * 100
+
+    end
+
+    ##########################################
+    #
+    # Helper methods for verbose dashboard
+    #
+    ##########################################
+    
+    def get_active_users
+      users = Set.new
+      @daemon_processes.values.flatten.each { |p| users.add(p[:user]) }
+      users
+    end
+    
+    def analyze_workflows
+      workflow_stats = {}
+      @daemon_processes.values.flatten.each do |process|
+        xml_file = extract_workflow_xml(process[:cmd])
+        if xml_file
+          workflow_stats[xml_file] ||= { :processes => 0, :memory => 0 }
+          workflow_stats[xml_file][:processes] += 1
+          workflow_stats[xml_file][:memory] += process[:rss] / 1024.0
+        end
+      end
+      workflow_stats
+    end
+    
+    def calculate_user_stats
+      user_stats = {}
+      @daemon_processes.values.flatten.each do |process|
+        user = process[:user]
+        user_stats[user] ||= { :processes => 0, :threads => 0, :memory => 0 }
+        user_stats[user][:processes] += 1
+        user_stats[user][:threads] += process[:threads]
+        user_stats[user][:memory] += process[:rss] / 1024.0
+      end
+      user_stats
     end
 
     ##########################################
