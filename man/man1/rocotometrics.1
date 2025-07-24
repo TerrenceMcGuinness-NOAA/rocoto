@@ -1,0 +1,159 @@
+.\" Man page for rocotometrics
+.TH ROCOTOMETRICS 1 "July 2025" "Rocoto" "Rocoto User Commands"
+
+.SH NAME
+rocotometrics \- Display runtime metrics for Rocoto daemon processes
+
+.SH SYNOPSIS
+.B rocotometrics
+[\fIOPTION\fR]...
+
+.SH DESCRIPTION
+.B rocotometrics
+is a utility for monitoring and reporting on Rocoto daemon processes running on the system. It provides information about daemon instances, resource usage, thread counts, and system statistics.
+
+The utility monitors three types of Rocoto daemons:
+.IP \(bu 2
+.B rocotobqserver
+\- Batch queue server daemon for performance optimization
+.IP \(bu 2 
+.B rocotodbserver
+\- Database server daemon for workflow state management
+.IP \(bu 2
+.B rocotoioserver
+\- I/O server daemon for file system operations
+
+.SH OPTIONS
+.TP
+.B \-h, \-\-help
+Show help message and exit
+
+.TP
+.B \-v, \-\-verbose \fR[\fILEVEL\fR]
+Run in verbose mode. Optional level (default: 1)
+
+.TP
+.B \-d, \-\-database \fIPATH\fR
+Path to database store file (optional, for future integration)
+
+.TP
+.B \-w, \-\-workflow \fIPATH\fR  
+Path to workflow document (optional, for future integration)
+
+.TP
+.B \-u, \-\-user\-stats
+Show per-user daemon statistics including process counts, thread counts, and memory usage by user
+
+.TP
+.B \-s, \-\-system\-stats
+Show system-wide daemon statistics including system load, memory usage, and daemon distribution
+
+.TP
+.B \-t, \-\-threads
+Show thread information for all daemon processes including thread counts and lightweight process (LWP) information
+
+.TP
+.B \-p, \-\-processes
+Show detailed process information including PID, PPID, resource usage, CPU/memory percentages, and elapsed time
+
+.SH OUTPUT FORMATS
+
+.SS Default Summary
+When run without specific options, displays a summary showing:
+.IP \(bu 2
+Process counts by daemon type
+.IP \(bu 2
+Total thread counts
+.IP \(bu 2
+Memory usage in MB
+.IP \(bu 2
+List of active users
+
+.SS User Statistics (\-u)
+Per-user breakdown showing:
+.IP \(bu 2
+Total processes and threads per user
+.IP \(bu 2
+Memory usage per user
+.IP \(bu 2
+Daemon type distribution per user
+
+.SS System Statistics (\-s)  
+System-wide information including:
+.IP \(bu 2
+Current system load averages
+.IP \(bu 2
+Total and available system memory
+.IP \(bu 2
+Average CPU and memory percentages by daemon type
+
+.SS Thread Information (\-t)
+Detailed thread information showing:
+.IP \(bu 2
+Process ID and owner
+.IP \(bu 2
+Thread and LWP counts
+.IP \(bu 2
+Resident Set Size (RSS) memory usage
+.IP \(bu 2
+Process elapsed time
+
+.SS Process Information (\-p)
+Complete process details including:
+.IP \(bu 2
+Process and parent process IDs
+.IP \(bu 2
+User ownership
+.IP \(bu 2
+Thread counts and memory usage (RSS and VSZ)
+.IP \(bu 2
+CPU and memory percentages
+.IP \(bu 2
+Process elapsed time
+
+.SH EXAMPLES
+
+.TP
+.B rocotometrics
+Show basic summary of all Rocoto daemons
+
+.TP  
+.B rocotometrics \-u
+Show per-user daemon statistics
+
+.TP
+.B rocotometrics \-s \-t
+Show system statistics and thread information
+
+.TP
+.B rocotometrics \-p \-v 2
+Show detailed process information with verbose logging
+
+.SH FILES
+.TP
+.I /proc/loadavg
+System load average information
+
+.TP
+.I /proc/meminfo
+System memory information
+
+.TP
+.I /proc/*/status
+Process status information
+
+.SH SEE ALSO
+.BR rocotorun (1),
+.BR rocotostat (1),
+.BR rocotocheck (1),
+.BR ps (1),
+.BR top (1)
+
+.SH AUTHOR
+Written for the Rocoto workflow management system.
+
+.SH REPORTING BUGS
+Report bugs to the Rocoto development team.
+
+.SH COPYRIGHT
+This is free software; see the source for copying conditions.
