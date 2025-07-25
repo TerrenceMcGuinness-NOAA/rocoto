@@ -57,8 +57,9 @@ module WFMStat
             # Clear screen
             system('clear') || system('cls')
             
-            # Show timestamp
-            puts "Rocoto Daemon Metrics - #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}"
+            # Show timestamp with hostname
+            hostname = `hostname`.chomp
+            puts "Rocoto Daemon Metrics - #{Time.now.strftime('%Y-%m-%d %H:%M:%S')} on #{hostname}"
             puts "Refresh interval: #{@options.refresh_interval} seconds (Press Ctrl+C to exit)"
             puts
 
@@ -234,9 +235,10 @@ module WFMStat
     ##########################################
     def display_summary
 
-      puts "=" * 80
+      delimiter_length = 63  # Match "Refresh interval: 120 seconds (Press Ctrl+C to exit)"
+      puts "=" * delimiter_length
       puts "Rocoto Daemon Metrics Summary"
-      puts "=" * 80
+      puts "=" * delimiter_length
       puts
 
       total_daemons = 0
@@ -269,7 +271,7 @@ module WFMStat
       # Display zombie information
       if @zombie_processes.length > 0
         puts
-        puts "⚠️  WARNING: ZOMBIE PROCESSES DETECTED"
+        puts "WARNING: ZOMBIE PROCESSES DETECTED"
         puts "=" * 40
         @zombie_processes.each do |zombie|
           puts sprintf("ZOMBIE: PID %d (%s) - %s owned by %s", 
@@ -279,7 +281,7 @@ module WFMStat
         puts "Total zombie processes: #{@zombie_processes.length}"
       else
         puts
-        puts "✓ No zombie processes detected"
+        puts "No zombie processes detected"
       end
       puts
 
@@ -292,9 +294,10 @@ module WFMStat
     ##########################################
     def display_user_stats
 
-      puts "=" * 80
+      delimiter_length = 63  # Match "Refresh interval: 120 seconds (Press Ctrl+C to exit)"
+      puts "=" * delimiter_length
       puts "Per-User Daemon Statistics"
-      puts "=" * 80
+      puts "=" * delimiter_length
       puts
 
       user_stats = {}
@@ -415,9 +418,10 @@ module WFMStat
     ##########################################
     def display_system_stats
 
-      puts "=" * 80
+      delimiter_length = 63  # Match "Refresh interval: 120 seconds (Press Ctrl+C to exit)"
+      puts "=" * delimiter_length
       puts "System-Wide Daemon Statistics"
-      puts "=" * 80
+      puts "=" * delimiter_length
       puts
 
       # Collect system load and memory information
@@ -466,9 +470,10 @@ module WFMStat
     ##########################################
     def display_thread_info
 
-      puts "=" * 80
+      delimiter_length = 63  # Match "Refresh interval: 120 seconds (Press Ctrl+C to exit)"
+      puts "=" * delimiter_length
       puts "Thread Information for Rocoto Daemons"  
-      puts "=" * 80
+      puts "=" * delimiter_length
       puts
 
       format = "%-8s %-12s %-16s %8s %8s %10s %10s %8s\n"
@@ -478,7 +483,7 @@ module WFMStat
       @daemon_processes.each do |daemon_type, processes|
         processes.sort_by { |p| p[:threads] }.reverse.each do |process|
           status = process[:is_zombie] ? "ZOMBIE" : "NORMAL"
-          status_marker = process[:is_zombie] ? "⚠️ " : "  "
+          status_marker = process[:is_zombie] ? "[ZOMBIE] " : "        "
           
           puts sprintf("#{status_marker}#{format}",
                       process[:pid],
@@ -495,7 +500,7 @@ module WFMStat
       zombie_count = @daemon_processes.values.flatten.count { |p| p[:is_zombie] }
       if zombie_count > 0
         puts
-        puts "⚠️  #{zombie_count} zombie process(es) detected - use -z for detailed zombie analysis"
+        puts "WARNING: #{zombie_count} zombie process(es) detected - use -z for detailed zombie analysis"
       end
       puts
 
@@ -508,9 +513,10 @@ module WFMStat
     ##########################################
     def display_process_info
 
-      puts "=" * 120
+      delimiter_length = 120
+      puts "=" * delimiter_length
       puts "Detailed Process Information for Rocoto Daemons"
-      puts "=" * 120
+      puts "=" * delimiter_length
       puts
 
       format = "%-8s %-8s %-12s %-16s %6s %6s %8s %8s %6s %6s %-10s\n"
@@ -546,9 +552,10 @@ module WFMStat
       begin
         require 'sqlite3'
         
-        puts "=" * 80
+        delimiter_length = 63  # Match "Refresh interval: 120 seconds (Press Ctrl+C to exit)"
+        puts "=" * delimiter_length
         puts "Database Performance Metrics"
-        puts "=" * 80
+        puts "=" * delimiter_length
         puts "Database: #{@options.database}"
         puts
 
@@ -590,13 +597,14 @@ module WFMStat
     ##########################################
     def display_zombie_info
 
-      puts "=" * 80
+      delimiter_length = 63  # Match "Refresh interval: 120 seconds (Press Ctrl+C to exit)"
+      puts "=" * delimiter_length
       puts "Zombie Process Detection"
-      puts "=" * 80
+      puts "=" * delimiter_length
       puts
 
       if @zombie_processes.length > 0
-        puts "⚠️  WARNING: ZOMBIE ROCOTO DAEMONS DETECTED"
+        puts "WARNING: ZOMBIE ROCOTO DAEMONS DETECTED"
         puts "=" * 50
         puts
 
@@ -663,10 +671,12 @@ module WFMStat
     ##########################################
     def display_verbose_dashboard
       
-      puts "=" * 100
+      delimiter_length = 63  # Match "Refresh interval: 120 seconds (Press Ctrl+C to exit)"
+      puts "=" * delimiter_length
       puts "ROCOTO COMPREHENSIVE DASHBOARD (Verbose Mode)"
-      puts "=" * 100
-      puts "Timestamp: #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}"
+      puts "=" * delimiter_length
+      hostname = `hostname`.chomp
+      puts "Timestamp: #{Time.now.strftime('%Y-%m-%d %H:%M:%S')} on #{hostname}"
       puts
 
       # 1. Executive Summary
@@ -674,17 +684,17 @@ module WFMStat
       total_threads = @daemon_processes.values.flatten.sum { |p| p[:threads] }
       total_memory = @daemon_processes.values.flatten.sum { |p| p[:rss] } / 1024.0
       
-      puts "📊 EXECUTIVE SUMMARY"
+      puts "EXECUTIVE SUMMARY"
       puts "-" * 50
       puts sprintf("Total Daemon Processes: %d", total_processes)
       puts sprintf("Total Threads:          %d", total_threads) 
       puts sprintf("Total Memory Usage:     %.1f MB", total_memory)
       puts sprintf("Active Users:           %d", get_active_users.size)
-      puts sprintf("Zombie Status:          %s", @zombie_processes.empty? ? "✓ All Healthy" : "⚠ #{@zombie_processes.size} zombies detected")
+      puts sprintf("Zombie Status:          %s", @zombie_processes.empty? ? "All Healthy" : "#{@zombie_processes.size} zombies detected")
       puts
 
       # 2. Per-Daemon Breakdown
-      puts "🔧 DAEMON TYPE BREAKDOWN"
+      puts "DAEMON TYPE BREAKDOWN"
       puts "-" * 50
       ['rocotobqserver', 'rocotodbserver', 'rocotoioserver'].each do |daemon_type|
         processes = @daemon_processes[daemon_type]
@@ -700,22 +710,28 @@ module WFMStat
       puts
 
       # 3. Workflow Analysis
-      puts "📋 WORKFLOW ANALYSIS"
+      puts "WORKFLOW ANALYSIS"
       puts "-" * 50
       workflow_stats = analyze_workflows
       if workflow_stats.empty?
         puts "No active workflows detected"
       else
         puts sprintf("Active Workflows: %d", workflow_stats.size)
+        
+        # Calculate the maximum XML filename length for proper alignment
+        max_xml_length = workflow_stats.keys.map(&:length).max || 0
+        min_padding = 3  # Minimum spaces after the longest filename
+        format_width = max_xml_length + min_padding
+        
         workflow_stats.sort.each do |workflow, stats|
-          puts sprintf("├─ %-20s: %d processes, %.1f MB", 
+          puts sprintf("├─ %-#{format_width}s: %d processes, %.1f MB", 
                       workflow, stats[:processes], stats[:memory])
         end
       end
       puts
 
       # 4. User Resource Distribution
-      puts "👥 USER RESOURCE DISTRIBUTION"
+      puts "USER RESOURCE DISTRIBUTION"
       puts "-" * 50
       user_stats = calculate_user_stats
       if user_stats.empty?
@@ -729,7 +745,7 @@ module WFMStat
       puts
 
       # 5. System Health Check
-      puts "🏥 SYSTEM HEALTH CHECK"
+      puts "SYSTEM HEALTH CHECK"
       puts "-" * 50
       health_issues = []
       
@@ -751,18 +767,18 @@ module WFMStat
       end
       
       if health_issues.empty?
-        puts "✓ All systems healthy"
-        puts "✓ No performance concerns detected"
-        puts "✓ Resource usage within normal limits"
+        puts "All systems healthy"
+        puts "No performance concerns detected"
+        puts "Resource usage within normal limits"
       else
-        puts "⚠ Health Issues Detected:"
+        puts "Health Issues Detected:"
         health_issues.each { |issue| puts "  • #{issue}" }
       end
       puts
 
       # 6. Database Status (if available)
       if @options.database && File.exist?(@options.database)
-        puts "💾 DATABASE STATUS"
+        puts "DATABASE STATUS"
         puts "-" * 50
         db_size = File.size(@options.database) / 1024.0 / 1024.0
         puts sprintf("Database file: %s", File.basename(@options.database))
@@ -771,11 +787,13 @@ module WFMStat
         puts
       end
 
-      puts "=" * 100
+      puts "=" * delimiter_length
       puts "End of Comprehensive Dashboard"
-      puts "=" * 100
+      puts "=" * delimiter_length
 
     end
+
+# ...existing code...
 
     ##########################################
     #
